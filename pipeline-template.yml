@@ -1,0 +1,401 @@
+Transform: AWS::Serverless-2016-10-31
+Description: IAM Role pipeline stack
+Parameters:
+  RepositoryName:
+    Description: CodeComit repository name
+    Type: String
+    Default: roles-pipeline-repo
+  BranchName:
+    Description: CodeCommit branch name
+    Type: String
+    Default: main
+
+Resources:
+  Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      Runtime: python3.8
+      CodeUri: lambda
+      Handler: roles_macro.handler
+      Environment: 
+        Variables:
+          BUCKET_ROLES: !Ref RolesBucket
+          PERMISSIONS_BOUNDARY_ROLE_ARN: !Ref PermissionsBoundaryForSelfServiceRoles
+      Policies:
+        - S3ReadPolicy:
+            BucketName: !Ref RolesBucket
+  DeployToS3:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: s3object_custom_resource.handler
+      Runtime: python3.8
+      CodeUri: lambda
+      Timeout: 300
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref RolesBucket
+  DeploymentCustomResource:
+    Type: Custom::DeployToS3
+    Properties:
+      ServiceToken: !GetAtt DeployToS3.Arn
+      Target:
+        Bucket: !Ref RolesBucket
+        Key: cloudformation/roles-template.zip
+      ZipBody: true
+      Body: |
+            AWSTemplateFormatVersion: "2010-09-09"
+            Transform: TestMacro
+            Resources:
+              Parameter1:
+                Type: AWS::SSM::Parameter
+                Properties:
+                  Name: /test/param
+                  Type: String
+                  Value: '123343'
+
+  Macro:
+    Type: AWS::CloudFormation::Macro
+    Properties:
+      Name: TestMacro
+      FunctionName: !GetAtt Function.Arn
+  RolesRepository:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+  RolesBucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled  
+  CodePipelineArtifactStoreBucket:
+    Type: 'AWS::S3::Bucket'
+  CodePipelineArtifactStoreBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref CodePipelineArtifactStoreBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: DenyUnEncryptedObjectUploads
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:PutObject'
+            Resource: !Join 
+              - ''
+              - - !GetAtt 
+                  - CodePipelineArtifactStoreBucket
+                  - Arn
+                - /*
+            Condition:
+              StringNotEquals:
+                's3:x-amz-server-side-encryption': 'aws:kms'
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: !Join 
+              - ''
+              - - !GetAtt 
+                  - CodePipelineArtifactStoreBucket
+                  - Arn
+                - /*
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
+  AmazonCloudWatchEventRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: cwe-pipeline-execution
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 'codepipeline:StartPipelineExecution'
+                Resource: !Join 
+                  - ''
+                  - - 'arn:aws:codepipeline:'
+                    - !Ref 'AWS::Region'
+                    - ':'
+                    - !Ref 'AWS::AccountId'
+                    - ':'
+                    - !Ref AppPipeline
+  AmazonCloudWatchEventRule:
+    Type: 'AWS::Events::Rule'
+    Properties:
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Join 
+            - ''
+            - - 'arn:aws:codecommit:'
+              - !Ref 'AWS::Region'
+              - ':'
+              - !Ref 'AWS::AccountId'
+              - ':'
+              - !Ref RepositoryName
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - main
+      Targets:
+        - Arn: !Join 
+            - ''
+            - - 'arn:aws:codepipeline:'
+              - !Ref 'AWS::Region'
+              - ':'
+              - !Ref 'AWS::AccountId'
+              - ':'
+              - !Ref AppPipeline
+          RoleArn: !GetAtt 
+            - AmazonCloudWatchEventRole
+            - Arn
+          Id: codepipeline-AppPipeline
+  AppPipeline:
+    Type: 'AWS::CodePipeline::Pipeline'
+    Properties:
+      Name: RolesPipeline
+      RoleArn: !GetAtt 
+        - CodePipelineServiceRole
+        - Arn
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: CodeCommit
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                BranchName: !Ref BranchName
+                RepositoryName: !Ref RepositoryName
+                PollForSourceChanges: false
+              RunOrder: 1
+            - Name: BucketAction
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: 1
+                Provider: S3
+              OutputArtifacts:
+                - Name: BucketOutput
+              Configuration:
+                S3Bucket: !Ref RolesBucket
+                S3ObjectKey: cloudformation/roles-template.zip
+                PollForSourceChanges: false
+              RunOrder: 1
+        - Name: LintAndCopyFiles
+          Actions:
+            - Name: LintAndCopyFiles
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Version: "1"
+                Provider: CodeBuild
+              OutputArtifacts:
+                - Name: LintAndCopyFiles
+              InputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                ProjectName: LintAndCopyFilesToBucket
+              RunOrder: 1        
+        - Name: DeployRoles
+          Actions:
+            - Name: DeployRoles
+              InputArtifacts:
+                - Name: BucketOutput
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Version: 1
+                Provider: CloudFormation
+              RunOrder: 1
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM,CAPABILITY_AUTO_EXPAND
+                ChangeSetName: pipeline-changeset
+                RoleArn: !GetAtt RolesDeployerServiceRole.Arn
+                StackName: RolesStack
+                TemplatePath: BucketOutput::cloudformation/roles-template.yml
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodePipelineArtifactStoreBucket
+  LintAndCopyFilesToBucket:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: LintAndCopyFilesToBucket
+      Description: Validate policies, roles and copy files to bucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.7
+            pre_build:
+              commands:
+                 - echo Starting Policy Validation
+                 - |
+                   for directory in */; do
+                      for file in $directory*.json; do
+                        if [ -f "$file" ]; then
+                          echo "Validating policy file: $file";
+                          finding=$(aws accessanalyzer validate-policy \
+                                --policy-document file://$file \
+                                --policy-type IDENTITY_POLICY  \
+                                --query 'findings[?findingType==`SECURITY_WARNING` || findingType==`ERROR`].issueCode')
+        
+                          if [ "$finding" != "[]" ]; then
+                              echo "Error While Parsing $file: $finding" && exit 1
+                          else
+                              echo "$file was successfully validated"
+                          fi
+                        fi
+                      done
+                    done 
+            build:
+              commands:
+                - aws s3 sync . s3://${RolesBucket}
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: 'aws/codebuild/standard:5.0'
+        PrivilegedMode: true
+      Artifacts:
+        Type: CODEPIPELINE
+      ServiceRole: !GetAtt CodePipelineServiceRole.Arn
+
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - codepipeline.amazonaws.com
+                - codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: AWS-CodePipeline-Service-3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'codecommit:CancelUploadArchive'
+                  - 'codecommit:GetBranch'
+                  - 'codecommit:GetCommit'
+                  - 'codecommit:GetUploadArchiveStatus'
+                  - 'codecommit:UploadArchive'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'codedeploy:CreateDeployment'
+                  - 'codedeploy:GetApplicationRevision'
+                  - 'codedeploy:GetDeployment'
+                  - 'codedeploy:GetDeploymentConfig'
+                  - 'codedeploy:RegisterApplicationRevision'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'codebuild:BatchGetBuilds'
+                  - 'codebuild:StartBuild'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'devicefarm:ListProjects'
+                  - 'devicefarm:ListDevicePools'
+                  - 'devicefarm:GetRun'
+                  - 'devicefarm:GetUpload'
+                  - 'devicefarm:CreateUpload'
+                  - 'devicefarm:ScheduleRun'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                  - 'lambda:ListFunctions'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'iam:PassRole'
+                  - 'access-analyzer:ValidatePolicy'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:*'
+                  - 's3:*'
+                  - 'sns:*'
+                  - 'cloudformation:*'
+                  - 'ssm:*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'logs:*'
+                Resource: !Sub 'arn:aws:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/codebuild/*'
+  RolesDeployerServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - cloudformation.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Path: /
+      Policies:
+        - PolicyName: RolesDeployerPolicy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'iam:*'
+                  - 'cloudwatch:*'
+                  - 's3:*'
+                  - 'sns:*'
+                  - 'cloudformation:*'
+                  - 'lambda:InvokeFunction'
+                  - 'lambda:ListFunctions'
+                  - 'ssm:*'
+                Resource: '*'
+  PermissionsBoundaryForSelfServiceRoles:
+    Type: 'AWS::IAM::ManagedPolicy'
+    Properties:
+      ManagedPolicyName: PermissionsBoundarySelfSeviceRoles
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'cloudwatch:*'
+              - 's3:*'
+              - 'sns:*'
+              - 'lambda:*'
+              - 'ssm:*'
+              - 'dynamodb:*'
+            Resource: '*'

@@ -1,0 +1,16 @@
+{
+    "RoleEC2": {
+        "Service": ["ec2.amazonaws.com"],
+        "Path": "/",
+        "Policies": [
+            "policy-ec2/policy1.json", "policy-ec2/policy2.json"
+        ]
+    },
+    "RoleLambda": {
+        "Service": ["lambda.amazonaws.com"],
+        "Path": "/",
+        "Policies": [
+            "policy-lambda/policy1.json", "policy-lambda/policy2.json"
+        ]
+    }
+}
