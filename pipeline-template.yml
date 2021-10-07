@@ -181,7 +181,7 @@ Resources:
               ActionTypeId:
                 Category: Source
                 Owner: AWS
-                Version: 1
+                Version: "1"
                 Provider: CodeCommit
               OutputArtifacts:
                 - Name: SourceOutput
@@ -194,7 +194,7 @@ Resources:
               ActionTypeId:
                 Category: Source
                 Owner: AWS
-                Version: 1
+                Version: "1"
                 Provider: S3
               OutputArtifacts:
                 - Name: BucketOutput
@@ -226,7 +226,7 @@ Resources:
               ActionTypeId:
                 Category: Deploy
                 Owner: AWS
-                Version: 1
+                Version: "1"
                 Provider: CloudFormation
               RunOrder: 1
               Configuration:
