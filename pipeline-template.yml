@@ -24,6 +24,13 @@ Resources:
       Policies:
         - S3ReadPolicy:
             BucketName: !Ref RolesBucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "Lambdas used as CloudFormation macro implementation cannot be inside a VPC"
+          - id: W92
+            reason: "ReservedConcurrentExecutions is not being configure to avoid extra costs for demonstration implementation"
   DeployToS3:
     Type: AWS::Serverless::Function
     Properties:
@@ -34,6 +41,13 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref RolesBucket
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "Lambdas used as CloudFormation macro implementation cannot be inside a VPC"
+          - id: W92
+            reason: "ReservedConcurrentExecutions is not being configure to avoid extra costs for demonstration implementation"
   DeploymentCustomResource:
     Type: Custom::DeployToS3
     Properties:
@@ -67,8 +81,49 @@ Resources:
     Properties:
       VersioningConfiguration:
         Status: Enabled  
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "S3 Bucket access logging not configured to keep code simpler. It is recommended for production workload."
+  RolesBucketPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket: !Ref RolesBucket
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Sid: DenyInsecureConnections
+            Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: !Join 
+              - ''
+              - - !GetAtt 
+                  - RolesBucket
+                  - Arn
+                - /*
+            Condition:
+              Bool:
+                'aws:SecureTransport': false
   CodePipelineArtifactStoreBucket:
     Type: 'AWS::S3::Bucket'
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled  
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256   
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W35
+            reason: "S3 Bucket access logging not configured to keep code simpler. It is recommended for production workload."
   CodePipelineArtifactStoreBucketPolicy:
     Type: 'AWS::S3::BucketPolicy'
     Properties:
@@ -244,6 +299,7 @@ Resources:
     Properties:
       Name: LintAndCopyFilesToBucket
       Description: Validate policies, roles and copy files to bucket
+      EncryptionKey: alias/aws/s3
       Source:
         Type: CODEPIPELINE
         BuildSpec: !Sub |
@@ -305,56 +361,47 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - 'codecommit:CancelUploadArchive'
-                  - 'codecommit:GetBranch'
-                  - 'codecommit:GetCommit'
-                  - 'codecommit:GetUploadArchiveStatus'
-                  - 'codecommit:UploadArchive'
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - 'codedeploy:CreateDeployment'
-                  - 'codedeploy:GetApplicationRevision'
-                  - 'codedeploy:GetDeployment'
-                  - 'codedeploy:GetDeploymentConfig'
-                  - 'codedeploy:RegisterApplicationRevision'
-                Resource: '*'
+                  - codecommit:CancelUploadArchive
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:UploadArchive
+                  - access-analyzer:ValidatePolicy
+                  - s3:PutObject
+                  - s3:ListObjects
+                  - s3:ListBucket
+                  - s3:GetObjectVersion
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                Resource: "*"
               - Effect: Allow
                 Action:
                   - 'codebuild:BatchGetBuilds'
                   - 'codebuild:StartBuild'
-                Resource: '*'
+                Resource: !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*
               - Effect: Allow
                 Action:
-                  - 'devicefarm:ListProjects'
-                  - 'devicefarm:ListDevicePools'
-                  - 'devicefarm:GetRun'
-                  - 'devicefarm:GetUpload'
-                  - 'devicefarm:CreateUpload'
-                  - 'devicefarm:ScheduleRun'
-                Resource: '*'
+                  - iam:PassRole
+                Resource: !GetAtt RolesDeployerServiceRole.Arn
               - Effect: Allow
                 Action:
-                  - 'lambda:InvokeFunction'
-                  - 'lambda:ListFunctions'
-                Resource: '*'
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DeleteStack
+                  - cloudformation:CreateChangeSet
+                Resource: 
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/*
               - Effect: Allow
                 Action:
-                  - 'iam:PassRole'
-                  - 'access-analyzer:ValidatePolicy'
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - 'cloudwatch:*'
-                  - 's3:*'
-                  - 'sns:*'
-                  - 'cloudformation:*'
-                  - 'ssm:*'
-                Resource: '*'
-              - Effect: Allow
-                Action:
-                  - 'logs:*'
-                Resource: !Sub 'arn:aws:logs:sa-east-1:${AWS::AccountId}:log-group:/aws/codebuild/*'
+                  - logs:CreateLogStream
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "Add * in "
   RolesDeployerServiceRole:
     Type: 'AWS::IAM::Role'
     Properties:
@@ -374,28 +421,74 @@ Resources:
             Statement:
               - Effect: Allow
                 Action:
-                  - 'iam:*'
-                  - 'cloudwatch:*'
-                  - 's3:*'
-                  - 'sns:*'
-                  - 'cloudformation:*'
-                  - 'lambda:InvokeFunction'
-                  - 'lambda:ListFunctions'
-                  - 'ssm:*'
-                Resource: '*'
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                  - ssm:ListParameters
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DeleteStack
+                  - s3:PutObject
+                  - s3:ListObjects
+                  - s3:ListBucket
+                  - s3:GetObjectVersion
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                  - s3:GetBucketVersioning
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+                Resource:
+                  - !GetAtt RolesBucket.Arn
+                  - !GetAtt Function.Arn
+                  - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:transform/*
+              - Effect: Allow
+                Action:
+                  - iam:CreatePolicy
+                  - iam:GetRole
+                  - iam:DetachRolePolicy
+                  - iam:GetPolicy
+                  - iam:PutRolePermissionsBoundary
+                  - iam:DeletePolicy
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:AttachRolePolicy
+                  - iam:UpdateRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:ListPolicyVersions
+                  - iam:CreatePolicyVersion
+                  - iam:DeletePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                  - iam:ListPolicyTags
+                  - iam:ListRoleTags
+                  - iam:TagPolicy
+                  - iam:TagRole
+                  - iam:UntagPolicy
+                  - iam:UntagRole
+                Resource:
+                  - arn:aws:iam::547037224086:policy/*
+                  - arn:aws:iam::547037224086:role/*
+  # Example of a PermissionsBoundary - Company should add the permissions that dev are allowed to perform with their created role
   PermissionsBoundaryForSelfServiceRoles:
     Type: 'AWS::IAM::ManagedPolicy'
     Properties:
-      ManagedPolicyName: PermissionsBoundarySelfSeviceRoles
       PolicyDocument:
         Version: 2012-10-17
         Statement:
           - Effect: Allow
             Action:
-              - 'cloudwatch:*'
-              - 's3:*'
-              - 'sns:*'
-              - 'lambda:*'
-              - 'ssm:*'
-              - 'dynamodb:*'
-            Resource: '*'
+              - s3:PutObject
+              - s3:GetObject
+              - dynamodb:PutItem
+              - dynamodb:UpdateItem
+              - dynamodb:DeleteItem            
+            Resource: 
+             - 'arn:aws:s3:::*'
+             - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:*'
