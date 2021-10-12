@@ -366,7 +366,6 @@ Resources:
                   - codecommit:GetCommit
                   - codecommit:GetUploadArchiveStatus
                   - codecommit:UploadArchive
-                  - access-analyzer:ValidatePolicy
                   - s3:PutObject
                   - s3:ListObjects
                   - s3:ListBucket
@@ -374,7 +373,13 @@ Resources:
                   - s3:GetObject
                   - s3:GetBucketLocation
                   - s3:GetBucketVersioning
-                Resource: "*"
+                Resource: 
+                  - !GetAtt RolesRepository.Arn
+                  - arn:aws:s3:::rolespipelinestack-*
+              - Effect: Allow
+                Action:
+                  - access-analyzer:ValidatePolicy
+                Resource: !Sub arn:aws:access-analyzer:${AWS::Region}:${AWS::AccountId}:*
               - Effect: Allow
                 Action:
                   - 'codebuild:BatchGetBuilds'
@@ -396,12 +401,8 @@ Resources:
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
+                  - logs:PutLogEvents
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
-    Metadata:
-      cfn_nag:
-        rules_to_suppress:
-          - id: W11
-            reason: "Add * in "
   RolesDeployerServiceRole:
     Type: 'AWS::IAM::Role'
     Properties:
