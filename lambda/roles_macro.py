@@ -1,6 +1,7 @@
 import boto3
 import json
 import os
+import copy
 
 
 s3 = boto3.client('s3')
@@ -57,7 +58,7 @@ def convert_template(fragment):
 
 
 def build_assume_role_policy(role_obj):
-    assume_role = dict(ASSUME_ROLE_POLICY_OBJ)
+    assume_role = copy.deepcopy(ASSUME_ROLE_POLICY_OBJ)
     assume_role['Statement'][0]['Principal']['Service'] = role_obj['Service']
     return assume_role
 
