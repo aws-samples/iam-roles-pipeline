@@ -409,6 +409,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - logs:CreateLogStream
+                  - logs:CreateLogGroup
                   - logs:PutLogEvents
                 Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*'
   RolesDeployerServiceRole:
@@ -482,8 +483,8 @@ Resources:
                   - iam:UntagPolicy
                   - iam:UntagRole
                 Resource:
-                  - arn:aws:iam::547037224086:policy/*
-                  - arn:aws:iam::547037224086:role/*
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:policy/*'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/*'
   # Example of a PermissionsBoundary - Company should add the permissions that dev are allowed to perform with their created role
   PermissionsBoundaryForSelfServiceRoles:
     Type: 'AWS::IAM::ManagedPolicy'
