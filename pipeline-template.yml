@@ -383,7 +383,8 @@ Resources:
                   - s3:GetBucketVersioning
                 Resource: 
                   - !GetAtt RolesRepository.Arn
-                  - arn:aws:s3:::rolespipelinestack-*
+                  - !GetAtt RolesBucket.Arn
+                  - !GetAtt CodePipelineArtifactStoreBucket.Arn
               - Effect: Allow
                 Action:
                   - access-analyzer:ValidatePolicy
