@@ -2,7 +2,7 @@
 
 This project implements a solution to automate the process of validating and deploying IAM Roles in AWS Accounts with appropriate protection in place.
 
-This repository contains the implementation of the pattern described in [Validate and deploy IAM Roles in AWS Accounts using CodePipeline, Access Analyser and CloudFormation Macros](https://apg-library.amazonaws.com/content-viewer/author/df1add4d-f211-43e3-8976-5314da75f627).
+This repository contains the implementation of the pattern described in [Validate and deploy IAM Roles in AWS Accounts using CodePipeline, Access Analyser and CloudFormation Macros](https://docs.aws.amazon.com/prescriptive-guidance/latest/patterns/automatically-validate-and-deploy-iam-policies-and-roles-in-an-aws-account-by-using-codepipeline-iam-access-analyzer-and-aws-cloudformation-macros.html).
 
 ## Problem
 Development teams need to create IAM Roles in AWS Accounts where their applications will run. Security team needs to make sure that the IAM Roles don't introduce any threat for the company. So, in order to avoid the creation of unsafe IAM roles, companies usually centralize the creation of IAM roles in a single team that evaluates the dev team request before allowing them to deploy their roles. This manual evaluation can break the deployment flow, since dev teams need to wait for the security team aprove or reprove their request.
